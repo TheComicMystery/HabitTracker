@@ -1,0 +1,66 @@
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--bg-primary);
+  transition: background-color 0.3s ease;
+}
+
+.main-content {
+  flex-grow: 1;
+  padding-top: 32px;
+  padding-bottom: 32px;
+  width: 100%;
+}
+
+.app-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  font-size: 1.5rem;
+  color: var(--text-secondary);
+  background-color: var(--bg-primary);
+}
+
+.app-container.mobile-simulation {
+  width: 375px;
+  height: 812px;
+  margin: 40px auto;
+  border-radius: 40px;
+  border: 12px solid #2c2c2c;
+  box-shadow: 0 0 0 2px #444, 0 20px 50px rgba(0,0,0,0.4);
+  overflow: hidden;
+  position: relative;
+  background-color: var(--bg-primary);
+}
+
+.app-container.mobile-simulation .main-content {
+  padding: 20px 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: calc(100% - 60px);
+  scrollbar-width: none;
+}
+
+.app-container.mobile-simulation .main-content::-webkit-scrollbar {
+  display: none;
+}
+
+.app-container.mobile-simulation::before {
+  content: '';
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 4px;
+  background-color: rgba(0,0,0,0.2);
+  border-radius: 2px;
+  z-index: 9999;
+  pointer-events: none;
+}
+
+[data-theme='dark'] .app-container.mobile-simulation::before {
+    background-color: rgba(255,255,255,0.2);
+}

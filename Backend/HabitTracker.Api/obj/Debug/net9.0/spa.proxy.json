@@ -1,0 +1,10 @@
+{
+"SpaProxyServer": {
+"ServerUrl": "",
+"RedirectUrl": "",
+"LaunchCommand": "",
+"WorkingDirectory": "C:\\Users\\igprc\\Downloads\\HabitTrackerCoursework\\Backend\\HabitTracker.Api",
+"MaxTimeoutInSeconds": "120",
+"KeepRunning": "false"
+}
+}

@@ -1,0 +1,113 @@
+.habit-form-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+}
+
+.form-row-split {
+    display: flex;
+    gap: 20px;
+}
+
+.counter-input {
+    display: flex;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--bg-secondary);
+}
+
+.counter-input button {
+    width: 40px;
+    height: 40px;
+    background: var(--bg-hover);
+    font-size: 1.2rem;
+    color: var(--text-primary);
+}
+
+.counter-input button:hover {
+    background: var(--border-color);
+}
+
+.counter-input input {
+    border: none;
+    text-align: center;
+    width: 60px;
+    background: transparent;
+    font-weight: 700;
+    box-shadow: none !important;
+}
+
+.color-picker-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.color-swatch {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: 2px solid transparent;
+}
+
+.color-swatch:hover {
+    transform: scale(1.1);
+}
+
+.color-swatch.selected {
+    border-color: var(--text-primary);
+    transform: scale(1.1);
+    box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--color-primary);
+}
+
+.days-grid {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.day-toggle {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.day-toggle:hover {
+    background: var(--bg-hover);
+}
+
+.day-toggle.active {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+}
+
+.form-actions-modal {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 10px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-color);
+}

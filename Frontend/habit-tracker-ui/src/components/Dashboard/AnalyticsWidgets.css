@@ -1,0 +1,231 @@
+.analytics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.3fr;
+    gap: 24px;
+    margin-bottom: 60px;
+    grid-column: span 4;
+    width: 100%;
+}
+
+.analytics-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-width: 0;
+    overflow: hidden;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+}
+
+.card-header-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.card-header-nav h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--text-primary);
+    font-weight: 700;
+    text-transform: capitalize;
+}
+
+.subtitle-small {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.nav-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.nav-btn {
+    background: var(--bg-hover);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+    padding: 0;
+}
+
+.nav-btn:hover:not(:disabled) {
+    background: var(--bg-secondary);
+    color: var(--color-primary);
+    border-color: var(--border-color);
+}
+
+.nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.custom-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+    width: 100%;
+    margin-bottom: 16px;
+}
+
+.weekday-label {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    padding-bottom: 8px;
+    text-transform: uppercase;
+}
+
+.calendar-day {
+    aspect-ratio: 1 / 1;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    position: relative;
+    border: 1px solid transparent;
+}
+
+.calendar-day:hover {
+    transform: scale(1.1);
+    z-index: 2;
+    border-color: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+.level-0 {
+    background-color: var(--bg-hover);
+    border: 1px solid transparent;
+}
+
+.level-1 {
+    background-color: #c7d2fe;
+    border: 1px solid #a5b4fc;
+}
+
+.level-2 {
+    background-color: #818cf8;
+    border: 1px solid #6366f1;
+}
+
+.level-3 {
+    background-color: #4f46e5;
+    border: 1px solid #4338ca;
+}
+
+.level-4 {
+    background-color: #312e81;
+    border: 1px solid #1e1b4b;
+    box-shadow: 0 0 10px rgba(79, 70, 229, 0.4);
+}
+
+.calendar-day.other-month {
+    opacity: 0.35;
+    filter: saturate(0.4);
+    border: 1px dashed var(--border-color);
+    cursor: default;
+    box-shadow: none !important;
+    pointer-events: none;
+}
+
+[data-theme='dark'] .calendar-day.other-month {
+    opacity: 0.45;
+}
+
+[data-theme='dark'] .level-0 {
+    background-color: #1e293b;
+    border-color: #334155;
+}
+
+[data-theme='dark'] .level-1 {
+    background-color: #312e81;
+    border-color: #3730a3;
+}
+
+[data-theme='dark'] .level-2 {
+    background-color: #4338ca;
+    border-color: #4f46e5;
+}
+
+[data-theme='dark'] .level-3 {
+    background-color: #6366f1;
+    border-color: #818cf8;
+}
+
+[data-theme='dark'] .level-4 {
+    background-color: #a5b4fc;
+    border-color: #c7d2fe;
+    box-shadow: 0 0 10px rgba(165, 180, 252, 0.4);
+}
+
+.heatmap-legend {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: auto;
+    padding-top: 10px;
+}
+
+.legend-items {
+    display: flex;
+    gap: 4px;
+}
+
+.legend-box {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+}
+
+.chart-wrapper {
+    width: 100%;
+    height: 100%;
+    min-height: 200px;
+}
+
+.custom-tooltip {
+    background-color: var(--bg-card);
+    padding: 10px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+    font-size: 0.85rem;
+}
+
+.tooltip-label {
+    margin: 0;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.tooltip-score {
+    margin: 0;
+    color: #6366f1;
+    font-weight: 500;
+}
+
+@media (max-width: 900px) {
+    .analytics-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.app-container.mobile-simulation .analytics-grid {
+    grid-template-columns: 1fr;
+}
