@@ -33,8 +33,7 @@ const DashboardPage = () => {
                 );
                 
                 const results = await Promise.all(entryPromises);
-                const flatEntries = results.flat();
-                setAllEntries(flatEntries);
+                setAllEntries(results.flat());
             } catch (e) {
                 console.error(e);
             } finally {

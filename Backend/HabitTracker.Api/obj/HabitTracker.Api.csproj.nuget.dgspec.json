@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Users\\igprc\\Downloads\\HabitTrackerCoursework\\Backend\\HabitTracker.Api\\HabitTracker.Api.csproj": {}
+    "C:\\Users\\igprc\\Downloads\\HabitKnotCoursework\\Backend\\HabitTracker.Api\\HabitTracker.Api.csproj": {}
   },
   "projects": {
-    "C:\\Users\\igprc\\Downloads\\HabitTrackerCoursework\\Backend\\HabitTracker.Api\\HabitTracker.Api.csproj": {
+    "C:\\Users\\igprc\\Downloads\\HabitKnotCoursework\\Backend\\HabitTracker.Api\\HabitTracker.Api.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Users\\igprc\\Downloads\\HabitTrackerCoursework\\Backend\\HabitTracker.Api\\HabitTracker.Api.csproj",
+        "projectUniqueName": "C:\\Users\\igprc\\Downloads\\HabitKnotCoursework\\Backend\\HabitTracker.Api\\HabitTracker.Api.csproj",
         "projectName": "HabitTracker.Api",
-        "projectPath": "C:\\Users\\igprc\\Downloads\\HabitTrackerCoursework\\Backend\\HabitTracker.Api\\HabitTracker.Api.csproj",
+        "projectPath": "C:\\Users\\igprc\\Downloads\\HabitKnotCoursework\\Backend\\HabitTracker.Api\\HabitTracker.Api.csproj",
         "packagesPath": "C:\\Users\\igprc\\.nuget\\packages\\",
-        "outputPath": "C:\\Users\\igprc\\Downloads\\HabitTrackerCoursework\\Backend\\HabitTracker.Api\\obj\\",
+        "outputPath": "C:\\Users\\igprc\\Downloads\\HabitKnotCoursework\\Backend\\HabitTracker.Api\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
@@ -68,11 +68,15 @@
             },
             "Microsoft.ML": {
               "target": "Package",
-              "version": "[5.0.0, )"
+              "version": "[3.0.1, )"
             },
             "Microsoft.ML.FastTree": {
               "target": "Package",
-              "version": "[5.0.0, )"
+              "version": "[3.0.1, )"
+            },
+            "Microsoft.ML.LightGbm": {
+              "target": "Package",
+              "version": "[3.0.1, )"
             },
             "MongoDB.Driver": {
               "target": "Package",

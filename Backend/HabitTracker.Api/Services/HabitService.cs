@@ -106,6 +106,7 @@ public class HabitService
         {
             existingEntry.CompletedCount = Math.Min(trackDto.CompletedCount, habit.TargetCount);
             existingEntry.IsFullyCompleted = existingEntry.CompletedCount >= habit.TargetCount;
+            existingEntry.FailureReason = trackDto.FailureReason;
             existingEntry.LastModified = DateTime.UtcNow;
             await _habitEntriesCollection.ReplaceOneAsync(filter, existingEntry);
             return MapToHabitEntryDto(existingEntry);
@@ -119,11 +120,33 @@ public class HabitService
                 Date = entryDate,
                 CompletedCount = Math.Min(trackDto.CompletedCount, habit.TargetCount),
                 IsFullyCompleted = trackDto.CompletedCount >= habit.TargetCount,
+                FailureReason = trackDto.FailureReason,
                 LastModified = DateTime.UtcNow
             };
             await _habitEntriesCollection.InsertOneAsync(newEntry);
             return MapToHabitEntryDto(newEntry);
         }
+    }
+
+    public async Task<bool> LogConfidenceAsync(string habitId, HabitConfidenceDto dto, string userId)
+    {
+        var filter = Builders<HabitEntry>.Filter.And(
+            Builders<HabitEntry>.Filter.Eq(e => e.HabitId, habitId),
+            Builders<HabitEntry>.Filter.Eq(e => e.UserId, userId),
+            Builders<HabitEntry>.Filter.Eq(e => e.Date, dto.Date.Date)
+        );
+
+        var update = Builders<HabitEntry>.Update
+            .Set(e => e.ConfidenceScore, dto.Score)
+            .Set(e => e.LastModified, DateTime.UtcNow)
+            .SetOnInsert(e => e.HabitId, habitId)
+            .SetOnInsert(e => e.UserId, userId)
+            .SetOnInsert(e => e.Date, dto.Date.Date)
+            .SetOnInsert(e => e.CompletedCount, 0)
+            .SetOnInsert(e => e.IsFullyCompleted, false);
+
+        var result = await _habitEntriesCollection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
+        return result.ModifiedCount > 0 || result.UpsertedId != null;
     }
 
     public async Task<List<DailyHabitStatusDto>> GetDailyHabitsStatusAsync(string userId, DateTime date)
@@ -189,11 +212,12 @@ public class HabitService
             habit.StartDate, 
             habit.IsArchived, 
             habit.CreatedAt,
-            0
+            0,
+            null
         );
 
     private HabitEntryDto MapToHabitEntryDto(HabitEntry entry) =>
-        new HabitEntryDto(entry.Id!, entry.HabitId, entry.UserId, entry.Date, entry.CompletedCount, entry.IsFullyCompleted);
+        new HabitEntryDto(entry.Id!, entry.HabitId, entry.UserId, entry.Date, entry.CompletedCount, entry.IsFullyCompleted, entry.FailureReason, entry.ConfidenceScore);
     
     private List<DayOfWeek> GetDefaultActiveDays() =>
         Enum.GetValues(typeof(DayOfWeek)).Cast<DayOfWeek>().ToList();

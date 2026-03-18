@@ -50,12 +50,13 @@ public class HabitsController : ControllerBase
                 Id = habitDto.Id, 
                 UserId = habitDto.UserId, 
                 TargetCount = habitDto.TargetCount, 
-                ActiveDays = habitDto.ActiveDays 
+                ActiveDays = habitDto.ActiveDays,
+                StartDate = habitDto.StartDate
             };
 
-            var probability = await _mlService.PredictSuccessProbabilityAsync(habitModel);
+            var (probability, shap) = await _mlService.PredictWithShapAsync(habitModel);
             
-            enrichedHabits.Add(habitDto with { SuccessProbability = probability });
+            enrichedHabits.Add(habitDto with { SuccessProbability = probability, ShapExplanation = shap });
         }
 
         return Ok(enrichedHabits);
@@ -97,6 +98,16 @@ public class HabitsController : ControllerBase
         var entry = await _habitService.TrackHabitAsync(habitId, trackDto, userId);
         if (entry == null) return BadRequest("Could not track habit. Habit not found or invalid data.");
         return Ok(entry);
+    }
+
+    [HttpPost("{habitId}/confidence")]
+    public async Task<IActionResult> LogConfidence(string habitId, HabitConfidenceDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var userId = GetUserId();
+        var success = await _habitService.LogConfidenceAsync(habitId, dto, userId);
+        if (!success) return BadRequest("Could not log confidence.");
+        return Ok();
     }
 
     [HttpGet("daily")] 

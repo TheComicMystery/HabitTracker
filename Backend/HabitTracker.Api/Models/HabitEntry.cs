@@ -18,5 +18,7 @@ public class HabitEntry
     public DateTime Date { get; set; } 
     public int CompletedCount { get; set; } = 0;
     public bool IsFullyCompleted { get; set; } = false; 
+    public string? FailureReason { get; set; }
+    public int? ConfidenceScore { get; set; }
     public DateTime LastModified { get; set; } = DateTime.UtcNow;
 }

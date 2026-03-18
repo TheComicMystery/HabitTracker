@@ -39,10 +39,13 @@ public record HabitDto(
     DateTime StartDate,
     bool IsArchived,
     DateTime CreatedAt,
-    double SuccessProbability = 0 
+    double SuccessProbability = 0,
+    string? ShapExplanation = null
 );
 
-public record TrackHabitDto([Required] DateTime Date, [Required][Range(0,100)] int CompletedCount);
+public record TrackHabitDto([Required] DateTime Date, [Required][Range(0,100)] int CompletedCount, string? FailureReason = null);
+
+public record HabitConfidenceDto([Required] DateTime Date, [Required][Range(1, 10)] int Score);
 
 public record HabitEntryDto(
     string Id,
@@ -50,7 +53,9 @@ public record HabitEntryDto(
     string UserId,
     DateTime Date,
     int CompletedCount,
-    bool IsFullyCompleted
+    bool IsFullyCompleted,
+    string? FailureReason,
+    int? ConfidenceScore
 );
 
 public record DailyHabitStatusDto(

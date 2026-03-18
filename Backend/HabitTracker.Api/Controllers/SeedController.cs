@@ -3,7 +3,6 @@ using MongoDB.Driver;
 using HabitTracker.Api.Models;
 using HabitTracker.Api.Config;
 using Microsoft.Extensions.Options;
-using BCrypt.Net;
 
 namespace HabitTracker.Api.Controllers;
 
@@ -46,8 +45,9 @@ public class SeedController : ControllerBase
         await _usersCollection.InsertOneAsync(user);
         var userId = user.Id;
 
-        var startGenDate = new DateTime(2025, 11, 1); 
-        var endGenDate = new DateTime(2025, 12, 8);
+        // 🟢 ДИНАМІЧНІ ДАТИ: Від сьогоднішнього дня і на 3 місяці назад
+        var endGenDate = DateTime.UtcNow.Date;
+        var startGenDate = endGenDate.AddDays(-90); 
         var creationDate = startGenDate.AddDays(-1);
 
         var allDays = new List<DayOfWeek> { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
@@ -80,13 +80,14 @@ public class SeedController : ControllerBase
 
         var random = new Random();
         var entries = new List<HabitEntry>();
+        var failureReasons = new[] { "Втома / Стрес", "Брак часу", "Лінь / Прокрастинація", "Забув(ла)", "Хвороба", "Свято / Гості" };
 
         for (var day = startGenDate; day <= endGenDate; day = day.AddDays(1))
         {
             foreach (var habit in habits)
             {
                 if (!habit.ActiveDays.Contains(day.DayOfWeek)) continue;
-                if (habit.IsArchived && day > endGenDate.AddDays(-10)) continue;
+                if (habit.IsArchived && day > endGenDate.AddDays(-20)) continue; // Старий проєкт закинуто 20 днів тому
 
                 double successChance = 0.96; 
                 bool allowPartial = false;
@@ -110,12 +111,35 @@ public class SeedController : ControllerBase
                     case "Читання книги 30 хв":
                         successChance = 0.70;
                         break;
+                    case "Не їсти солодкого":
+                        successChance = 0.85;
+                        break;
                     default:
                         successChance = 0.96;
                         break;
                 }
 
-                if (random.NextDouble() > successChance && !allowPartial) continue;
+                // 🟢 ДОДАНО ІМІТАЦІЮ ЗРИВІВ ДЛЯ АКТИВНОГО НАВЧАННЯ (Active Learning)
+                if (random.NextDouble() > successChance && !allowPartial) 
+                {
+                    // У 25% випадків пропуску користувач свідомо залишає причину зриву (через нове модальне вікно)
+                    if (random.NextDouble() < 0.25)
+                    {
+                        entries.Add(new HabitEntry
+                        {
+                            HabitId = habit.Id,
+                            UserId = userId,
+                            Date = day,
+                            CompletedCount = 0,
+                            IsFullyCompleted = false,
+                            FailureReason = failureReasons[random.Next(failureReasons.Length)],
+                            // Імітуємо ситуацію, коли ШІ запитав користувача вранці, і той поставив низьку впевненість
+                            ConfidenceScore = random.NextDouble() < 0.3 ? random.Next(1, 5) : null, 
+                            LastModified = DateTime.UtcNow
+                        });
+                    }
+                    continue;
+                }
 
                 int completed = 0;
 
@@ -152,6 +176,8 @@ public class SeedController : ControllerBase
                         Date = day,
                         CompletedCount = completed,
                         IsFullyCompleted = completed >= habit.TargetCount,
+                        // Імітуємо ситуацію, коли ШІ запитав користувача, і той поставив високу впевненість перед виконанням
+                        ConfidenceScore = random.NextDouble() < 0.15 ? random.Next(7, 11) : null,
                         LastModified = DateTime.UtcNow
                     });
                 }
@@ -163,6 +189,6 @@ public class SeedController : ControllerBase
             await _habitEntriesCollection.InsertManyAsync(entries);
         }
 
-        return Ok(new { message = "Demo data updated", user = "Олексій" });
+        return Ok(new { message = "Demo data successfully generated for LightGBM!", user = "Олексій", totalEntries = entries.Count });
     }
 }
