@@ -21,7 +21,13 @@ public class HabitModelInput
     [LoadColumn(9)] public float RecoverySpeed { get; set; }
     [LoadColumn(10)] public float LogHabitAge { get; set; }
     [LoadColumn(11)] public string MaturityBucket { get; set; } = string.Empty;
-    [LoadColumn(12)] public bool Label { get; set; }
+    [LoadColumn(12)] public float SynergyScore { get; set; }
+    [LoadColumn(13)] public float IsHoliday { get; set; }
+    [LoadColumn(14)] public float SinDayOfYear { get; set; }
+    [LoadColumn(15)] public float CosDayOfYear { get; set; }
+    [LoadColumn(16)] public float RetroactiveLogRatio { get; set; }
+    [LoadColumn(17)] public float CueStrengthScore { get; set; }
+    [LoadColumn(18)] public bool Label { get; set; }
 }
 
 public class HabitModelOutput
@@ -77,9 +83,19 @@ public class HabitPredictionService
             float recentRate = CalculateRecentRate(entries, habit.Id!, entry.Date, 14);
             bool isWeekend = entry.Date.DayOfWeek == DayOfWeek.Saturday || entry.Date.DayOfWeek == DayOfWeek.Sunday;
 
-            float contextDrift = CalculateContextDrift(entries, habit, entry.Date);
+            float contextDrift = CalculateWassersteinDrift(entries, habit.Id!, entry.Date);
             float recoverySpeed = CalculateRecoverySpeed(entries, habit, entry.Date);
             var ageFeatures = CalculateAgeFeatures(habit.StartDate, entry.Date);
+
+            float synergy = CalculateSynergy(entries, habit.Id!, habit.UserId, entry.Date);
+            float isHoliday = IsUkrainianHoliday(entry.Date) ? 1f : 0f;
+
+            float daysInYear = DateTime.IsLeapYear(entry.Date.Year) ? 366f : 365f;
+            float sinDay = (float)Math.Sin(2 * Math.PI * entry.Date.DayOfYear / daysInYear);
+            float cosDay = (float)Math.Cos(2 * Math.PI * entry.Date.DayOfYear / daysInYear);
+
+            float retroRatio = CalculateRetroactiveRatio(entries, habit.Id!, entry.Date);
+            float cueStrength = CalculateCueStrength(entries, habit.Id!, entry.Date);
 
             trainingData.Add(new HabitModelInput
             {
@@ -95,6 +111,12 @@ public class HabitPredictionService
                 RecoverySpeed = recoverySpeed,
                 LogHabitAge = ageFeatures.LogAge,
                 MaturityBucket = ageFeatures.Bucket,
+                SynergyScore = synergy,
+                IsHoliday = isHoliday,
+                SinDayOfYear = sinDay,
+                CosDayOfYear = cosDay,
+                RetroactiveLogRatio = retroRatio,
+                CueStrengthScore = cueStrength,
                 Label = entry.IsFullyCompleted
             });
         }
@@ -105,7 +127,7 @@ public class HabitPredictionService
 
         var pipeline = _mlContext.Transforms.Categorical.OneHotEncoding("MaturityBucketEncoded", "MaturityBucket")
             .Append(_mlContext.Transforms.Concatenate("Features", 
-                "IsWeekend", "TargetCount", "CurrentStreak", "Momentum", "FatigueScore", "StreakVolatility", "RecentSuccessRate", "UserOverallRate", "ContextDriftScore", "RecoverySpeed", "LogHabitAge", "MaturityBucketEncoded"))
+                "IsWeekend", "TargetCount", "CurrentStreak", "Momentum", "FatigueScore", "StreakVolatility", "RecentSuccessRate", "UserOverallRate", "ContextDriftScore", "RecoverySpeed", "LogHabitAge", "SynergyScore", "IsHoliday", "SinDayOfYear", "CosDayOfYear", "RetroactiveLogRatio", "CueStrengthScore", "MaturityBucketEncoded"))
             .Append(_mlContext.BinaryClassification.Trainers.LightGbm(
                 labelColumnName: "Label", 
                 featureColumnName: "Features",
@@ -151,11 +173,21 @@ public class HabitPredictionService
             recentRate = _userOverallRates.ContainsKey(userId) ? _userOverallRates[userId] : 0.5f;
         }
 
-        float contextDrift = CalculateContextDrift(habitHistory, habit, today);
+        float contextDrift = CalculateWassersteinDrift(habitHistory, habit.Id!, today);
         float recoverySpeed = CalculateRecoverySpeed(habitHistory, habit, today);
         var ageFeatures = CalculateAgeFeatures(habit.StartDate, today);
+        
+        float synergy = CalculateSynergy(allUserHistory, habit.Id!, userId, today);
+        float isHoliday = IsUkrainianHoliday(today) ? 1f : 0f;
+
+        float daysInYear = DateTime.IsLeapYear(today.Year) ? 366f : 365f;
+        float sinDay = (float)Math.Sin(2 * Math.PI * today.DayOfYear / daysInYear);
+        float cosDay = (float)Math.Cos(2 * Math.PI * today.DayOfYear / daysInYear);
 
         bool isWeekend = today.DayOfWeek == DayOfWeek.Saturday || today.DayOfWeek == DayOfWeek.Sunday;
+
+        float retroRatio = CalculateRetroactiveRatio(habitHistory, habit.Id!, today);
+        float cueStrength = CalculateCueStrength(habitHistory, habit.Id!, today);
 
         var input = new HabitModelInput
         {
@@ -170,7 +202,13 @@ public class HabitPredictionService
             ContextDriftScore = contextDrift,
             RecoverySpeed = recoverySpeed,
             LogHabitAge = ageFeatures.LogAge,
-            MaturityBucket = ageFeatures.Bucket
+            MaturityBucket = ageFeatures.Bucket,
+            SynergyScore = synergy,
+            IsHoliday = isHoliday,
+            SinDayOfYear = sinDay,
+            CosDayOfYear = cosDay,
+            RetroactiveLogRatio = retroRatio,
+            CueStrengthScore = cueStrength
         };
 
         var result = predictionEngine.Predict(input);
@@ -187,14 +225,18 @@ public class HabitPredictionService
         var neg = new List<string>();
 
         if (f.IsWeekend == 1 && f.RecentSuccessRate < 0.5) neg.Add("вихідний день 🔴");
+        if (f.IsHoliday == 1 && f.RecentSuccessRate < 0.6) neg.Add("святковий день 🔴");
         if (f.FatigueScore > 10) neg.Add("висока загальна втома 🔴");
-        if (f.ContextDriftScore < -0.2f) neg.Add("недавній збій режиму 🔴");
+        if (f.ContextDriftScore > 2.5f) neg.Add("зсув часу виконання 🔴");
         if (f.MaturityBucket == "Week1" || f.MaturityBucket == "Week2") neg.Add("звичка ще крихка 🟡");
         if (f.RecoverySpeed > 3f) neg.Add("важке відновлення після зривів 🟡");
+        if (f.RetroactiveLogRatio > 0.4f) neg.Add("часте логування заднім числом 🟡");
 
         if (f.CurrentStreak > 5) pos.Add("гарний стрік 🟢");
         if (f.Momentum > 1) pos.Add("зростаючий моментум 🟢");
         if (f.LogHabitAge > 4) pos.Add("звичка вже закріплена 🟢");
+        if (f.SynergyScore > 0.6f) pos.Add("синергія з іншими звичками 🟢");
+        if (f.CueStrengthScore < 1.5f && f.LogHabitAge > 1) pos.Add("стабільний час виконання 🟢");
 
         string condition = prob < 45 ? "низька" : prob > 70 ? "висока" : "середня";
         
@@ -314,40 +356,113 @@ public class HabitPredictionService
         return (float)successes / recentEntries.Count;
     }
 
-    private float CalculateContextDrift(List<HabitEntry> habitHistory, Habit habit, DateTime targetDate)
+    private float CalculateWassersteinDrift(List<HabitEntry> habitHistory, string habitId, DateTime targetDate)
     {
         var recentStart = targetDate.Date.AddDays(-14);
         var prevStart = targetDate.Date.AddDays(-44);
-        
-        var entriesDict = habitHistory.Where(e => e.HabitId == habit.Id).ToDictionary(e => e.Date.Date, e => e.IsFullyCompleted);
-        
-        int recentExpected = 0, recentCompleted = 0;
-        int prevExpected = 0, prevCompleted = 0;
 
-        for (var d = prevStart; d < targetDate.Date; d = d.AddDays(1))
+        var recentHours = habitHistory
+            .Where(e => e.HabitId == habitId && e.Date >= recentStart && e.Date < targetDate && e.IsFullyCompleted)
+            .Select(e => (float)e.LastModified.Hour)
+            .OrderBy(h => h)
+            .ToList();
+
+        var prevHours = habitHistory
+            .Where(e => e.HabitId == habitId && e.Date >= prevStart && e.Date < recentStart && e.IsFullyCompleted)
+            .Select(e => (float)e.LastModified.Hour)
+            .OrderBy(h => h)
+            .ToList();
+
+        if (recentHours.Count == 0 || prevHours.Count == 0) return 0f;
+
+        float distance = 0f;
+        var allHours = recentHours.Concat(prevHours).Distinct().OrderBy(h => h).ToList();
+        
+        for (int i = 0; i < allHours.Count - 1; i++)
         {
-            if (d < habit.StartDate.Date) continue;
-            
-            if (habit.ActiveDays.Contains(d.DayOfWeek))
+            float currentHour = allHours[i];
+            float nextHour = allHours[i + 1];
+            float cdfRecent = (float)recentHours.Count(h => h <= currentHour) / recentHours.Count;
+            float cdfPrev = (float)prevHours.Count(h => h <= currentHour) / prevHours.Count;
+            distance += Math.Abs(cdfRecent - cdfPrev) * (nextHour - currentHour);
+        }
+
+        return distance;
+    }
+
+    private float CalculateSynergy(List<HabitEntry> allUserEntries, string habitId, string userId, DateTime targetDate)
+    {
+        var recentStart = targetDate.AddDays(-30);
+        var recentEntries = allUserEntries
+            .Where(e => e.UserId == userId && e.Date >= recentStart && e.Date < targetDate && e.IsFullyCompleted)
+            .ToList();
+
+        var targetHabitDays = recentEntries
+            .Where(e => e.HabitId == habitId)
+            .Select(e => e.Date.Date)
+            .ToHashSet();
+
+        if (targetHabitDays.Count == 0) return 0f;
+
+        var topOtherHabits = recentEntries
+            .Where(e => e.HabitId != habitId)
+            .GroupBy(e => e.HabitId)
+            .OrderByDescending(g => g.Count())
+            .Take(3)
+            .ToList();
+
+        if (!topOtherHabits.Any()) return 0f;
+
+        float totalSynergy = 0f;
+        foreach (var otherHabitGroup in topOtherHabits)
+        {
+            var otherHabitDays = otherHabitGroup.Select(e => e.Date.Date).ToHashSet();
+            int intersection = targetHabitDays.Intersect(otherHabitDays).Count();
+            int union = targetHabitDays.Union(otherHabitDays).Count();
+            if (union > 0)
             {
-                bool completed = entriesDict.ContainsKey(d) && entriesDict[d];
-                if (d >= recentStart)
-                {
-                    recentExpected++;
-                    if (completed) recentCompleted++;
-                }
-                else
-                {
-                    prevExpected++;
-                    if (completed) prevCompleted++;
-                }
+                totalSynergy += (float)intersection / union;
             }
         }
 
-        float recentRate = recentExpected > 0 ? (float)recentCompleted / recentExpected : 0f;
-        float prevRate = prevExpected > 0 ? (float)prevCompleted / prevExpected : recentRate;
+        return totalSynergy / topOtherHabits.Count;
+    }
 
-        return recentRate - prevRate;
+    private float CalculateRetroactiveRatio(List<HabitEntry> habitHistory, string habitId, DateTime targetDate)
+    {
+        var recentStart = targetDate.AddDays(-30);
+        var recentEntries = habitHistory
+            .Where(e => e.HabitId == habitId && e.Date >= recentStart && e.Date < targetDate && e.IsFullyCompleted)
+            .ToList();
+
+        if (recentEntries.Count == 0) return 0f;
+
+        int retroactiveCount = recentEntries.Count(e => (e.LastModified.Date - e.Date.Date).TotalDays >= 1);
+        return (float)retroactiveCount / recentEntries.Count;
+    }
+
+    private float CalculateCueStrength(List<HabitEntry> habitHistory, string habitId, DateTime targetDate)
+    {
+        var recentStart = targetDate.AddDays(-30);
+        var recentHours = habitHistory
+            .Where(e => e.HabitId == habitId && e.Date >= recentStart && e.Date < targetDate && e.IsFullyCompleted)
+            .Select(e => (float)e.LastModified.Hour)
+            .ToList();
+
+        if (recentHours.Count < 2) return 12f; 
+
+        float avg = recentHours.Average();
+        float sumSq = recentHours.Sum(h => (h - avg) * (h - avg));
+        return (float)Math.Sqrt(sumSq / recentHours.Count);
+    }
+
+    private bool IsUkrainianHoliday(DateTime date)
+    {
+        var holidays = new HashSet<(int Month, int Day)>
+        {
+            (1, 1), (3, 8), (5, 1), (5, 8), (6, 28), (7, 15), (7, 28), (8, 24), (10, 1), (12, 25)
+        };
+        return holidays.Contains((date.Month, date.Day));
     }
 
     private float CalculateRecoverySpeed(List<HabitEntry> habitHistory, Habit habit, DateTime targetDate)
