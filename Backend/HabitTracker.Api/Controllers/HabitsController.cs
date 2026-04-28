@@ -43,20 +43,30 @@ public class HabitsController : ControllerBase
         
         await _mlService.TrainModelAsync();
 
+        var habitModels = habits.Select(habitDto => new Models.Habit
+        {
+            Id = habitDto.Id,
+            UserId = habitDto.UserId,
+            TargetCount = habitDto.TargetCount,
+            ActiveDays = habitDto.ActiveDays,
+            StartDate = habitDto.StartDate
+        }).ToList();
+
+        var predictions = await _mlService.PredictManyWithShapAsync(habitModels);
+        var confidencePrompts = await _mlService.GetConfidencePromptsAsync(habitModels, predictions);
+
         foreach (var habitDto in habits)
         {
-            var habitModel = new Models.Habit 
-            { 
-                Id = habitDto.Id, 
-                UserId = habitDto.UserId, 
-                TargetCount = habitDto.TargetCount, 
-                ActiveDays = habitDto.ActiveDays,
-                StartDate = habitDto.StartDate
-            };
-
-            var (probability, shap) = await _mlService.PredictWithShapAsync(habitModel);
+            predictions.TryGetValue(habitDto.Id, out var prediction);
+            confidencePrompts.TryGetValue(habitDto.Id, out var confidencePrompt);
             
-            enrichedHabits.Add(habitDto with { SuccessProbability = probability, ShapExplanation = shap });
+            enrichedHabits.Add(habitDto with
+            {
+                SuccessProbability = prediction.Probability,
+                ShapExplanation = prediction.Explanation,
+                ShouldAskConfidence = confidencePrompt.ShouldAsk,
+                ActiveLearningReason = confidencePrompt.Reason
+            });
         }
 
         return Ok(enrichedHabits);

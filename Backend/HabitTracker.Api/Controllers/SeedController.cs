@@ -33,21 +33,27 @@ public class SeedController : ControllerBase
         {
             await _habitsCollection.DeleteManyAsync(h => h.UserId == user.Id);
             await _habitEntriesCollection.DeleteManyAsync(e => e.UserId == user.Id);
-            await _usersCollection.DeleteOneAsync(u => u.Id == user.Id);
+            var userUpdate = Builders<User>.Update
+                .Set(u => u.Username, "Demo User")
+                .Set(u => u.PasswordHash, BCrypt.Net.BCrypt.HashPassword("demo123"));
+            await _usersCollection.UpdateOneAsync(u => u.Id == user.Id, userUpdate);
         }
 
-        user = new User
+        if (user == null)
         {
+            user = new User
+            {
             Username = "Олексій",
             Email = demoEmail,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword("demo123")
-        };
-        await _usersCollection.InsertOneAsync(user);
+            };
+            await _usersCollection.InsertOneAsync(user);
+        }
         var userId = user.Id;
 
         // 🟢 ДИНАМІЧНІ ДАТИ: Від сьогоднішнього дня і на 3 місяці назад
-        var endGenDate = DateTime.UtcNow.Date;
-        var startGenDate = endGenDate.AddDays(-90); 
+        var endGenDate = new DateTime(2026, 4, 28);
+        var startGenDate = endGenDate.AddMonths(-3).AddDays(1);
         var creationDate = startGenDate.AddDays(-1);
 
         var allDays = new List<DayOfWeek> { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
@@ -78,7 +84,7 @@ public class SeedController : ControllerBase
 
         await _habitsCollection.InsertManyAsync(habits);
 
-        var random = new Random();
+        var random = new Random(20260428);
         var entries = new List<HabitEntry>();
         var failureReasons = new[] { "Втома / Стрес", "Брак часу", "Лінь / Прокрастинація", "Забув(ла)", "Хвороба", "Свято / Гості" };
 
@@ -189,6 +195,15 @@ public class SeedController : ControllerBase
             await _habitEntriesCollection.InsertManyAsync(entries);
         }
 
-        return Ok(new { message = "Demo data successfully generated for LightGBM!", user = "Олексій", totalEntries = entries.Count });
+        return Ok(new
+        {
+            message = "Demo data successfully generated for the ensemble model.",
+            user = demoEmail,
+            password = "demo123",
+            startDate = startGenDate,
+            endDate = endGenDate,
+            totalHabits = habits.Count,
+            totalEntries = entries.Count
+        });
     }
 }

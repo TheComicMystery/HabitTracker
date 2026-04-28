@@ -4,6 +4,10 @@ using MongoDB.Driver;
 using HabitTracker.Api.Models;
 using HabitTracker.Api.Config;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Caching.Memory;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Text.Json;
 
 namespace HabitTracker.Api.Services;
 
@@ -38,27 +42,68 @@ public class HabitModelOutput
     public float Score { get; set; }
 }
 
+public class HabitEnsemblePrediction
+{
+    public double Probability { get; set; }
+    public Dictionary<string, float> ModelProbabilities { get; set; } = new();
+    public List<ShapContribution> ShapContributions { get; set; } = new();
+}
+
+public class ExternalHabitEnsembleOutput
+{
+    public Dictionary<string, float> ModelProbabilities { get; set; } = new();
+    public float? StackedProbability { get; set; }
+    public List<ShapContribution> ShapContributions { get; set; } = new();
+}
+
+public class ExternalHabitEnsembleBatchOutput
+{
+    public List<ExternalHabitEnsembleOutput> Predictions { get; set; } = new();
+}
+
+public class ShapContribution
+{
+    public string Feature { get; set; } = string.Empty;
+    public float Value { get; set; }
+    public string Direction { get; set; } = string.Empty;
+}
+
 public class HabitPredictionService
 {
     private readonly IMongoCollection<Habit> _habitsCollection;
     private readonly IMongoCollection<HabitEntry> _entriesCollection;
     private readonly MLContext _mlContext;
-    private ITransformer? _model;
+    private readonly IMemoryCache _memoryCache;
+    private readonly object _trainingLock = new();
+    private List<WeightedHabitModel> _ensembleModels = new();
+    private readonly ConcurrentDictionary<string, long> _userCacheVersions = new();
+    private string? _externalEnsembleModelPath;
+    private bool _externalEnsembleReady = false;
     private bool _isTrained = false;
+    private DateTime? _lastTrainedUtc;
 
     private Dictionary<string, float> _userOverallRates = new();
 
-    public HabitPredictionService(IOptions<MongoDbSettings> mongoDbSettings)
+    private sealed record WeightedHabitModel(string Name, double Weight, ITransformer Model);
+
+    private static readonly TimeSpan ModelTrainingTtl = TimeSpan.FromHours(24);
+    private static readonly TimeSpan FeatureCacheTtl = TimeSpan.FromHours(2);
+    private static readonly TimeSpan PredictionCacheTtl = TimeSpan.FromHours(2);
+
+    public HabitPredictionService(IOptions<MongoDbSettings> mongoDbSettings, IMemoryCache memoryCache)
     {
         var mongoClient = new MongoClient(mongoDbSettings.Value.ConnectionString);
         var mongoDatabase = mongoClient.GetDatabase(mongoDbSettings.Value.DatabaseName);
         _habitsCollection = mongoDatabase.GetCollection<Habit>("Habits");
         _entriesCollection = mongoDatabase.GetCollection<HabitEntry>("HabitEntries");
         _mlContext = new MLContext(seed: 1337);
+        _memoryCache = memoryCache;
     }
 
     public async Task TrainModelAsync()
     {
+        if (_isTrained && _lastTrainedUtc.HasValue && DateTime.UtcNow - _lastTrainedUtc.Value < ModelTrainingTtl) return;
+
         var habits = await _habitsCollection.Find(_ => true).ToListAsync();
         var entries = await _entriesCollection.Find(_ => true).ToListAsync();
 
@@ -121,23 +166,313 @@ public class HabitPredictionService
             });
         }
 
-        if (trainingData.Count < 20) return;
+        if (trainingData.Count < 20 || trainingData.Select(d => d.Label).Distinct().Count() < 2) return;
 
         var dataView = _mlContext.Data.LoadFromEnumerable(trainingData);
 
-        var pipeline = _mlContext.Transforms.Categorical.OneHotEncoding("MaturityBucketEncoded", "MaturityBucket")
-            .Append(_mlContext.Transforms.Concatenate("Features", 
-                "IsWeekend", "TargetCount", "CurrentStreak", "Momentum", "FatigueScore", "StreakVolatility", "RecentSuccessRate", "UserOverallRate", "ContextDriftScore", "RecoverySpeed", "LogHabitAge", "SynergyScore", "IsHoliday", "SinDayOfYear", "CosDayOfYear", "RetroactiveLogRatio", "CueStrengthScore", "MaturityBucketEncoded"))
-            .Append(_mlContext.BinaryClassification.Trainers.LightGbm(
-                labelColumnName: "Label", 
+        var externalReady = await TryTrainExternalEnsembleAsync(trainingData);
+        var trainedModels = new List<WeightedHabitModel>();
+
+        TryAddTrainedModel(trainedModels, "LightGBM", 0.55, () =>
+            TrainBaseModel(dataView, _mlContext.BinaryClassification.Trainers.LightGbm(
+                labelColumnName: "Label",
                 featureColumnName: "Features",
                 numberOfLeaves: 31,
                 learningRate: 0.05,
                 numberOfIterations: 200
-            ));
+            )));
 
-        _model = pipeline.Fit(dataView);
-        _isTrained = true;
+        if (!externalReady)
+        {
+            TryAddTrainedModel(trainedModels, "FastTreeFallback", 0.25, () =>
+                TrainBaseModel(dataView, _mlContext.BinaryClassification.Trainers.FastTree(
+                    labelColumnName: "Label",
+                    featureColumnName: "Features",
+                    numberOfLeaves: 24,
+                    numberOfTrees: 120,
+                    minimumExampleCountPerLeaf: 4,
+                    learningRate: 0.08
+                )));
+
+            TryAddTrainedModel(trainedModels, "LinearLogisticFallback", 0.20, () =>
+                TrainBaseModel(dataView, _mlContext.BinaryClassification.Trainers.SdcaLogisticRegression(
+                    labelColumnName: "Label",
+                    featureColumnName: "Features",
+                    l2Regularization: 0.01f,
+                    maximumNumberOfIterations: 100
+                )));
+        }
+
+        if (!trainedModels.Any() && !externalReady) return;
+
+        lock (_trainingLock)
+        {
+            _ensembleModels = trainedModels;
+            _externalEnsembleReady = externalReady;
+            _isTrained = true;
+            _lastTrainedUtc = DateTime.UtcNow;
+        }
+    }
+
+    private ITransformer TrainBaseModel(IDataView dataView, IEstimator<ITransformer> trainer)
+    {
+        var pipeline = BuildFeaturePipeline().Append(trainer);
+        return pipeline.Fit(dataView);
+    }
+
+    private static void TryAddTrainedModel(
+        List<WeightedHabitModel> models,
+        string name,
+        double weight,
+        Func<ITransformer> train)
+    {
+        try
+        {
+            models.Add(new WeightedHabitModel(name, weight, train()));
+        }
+        catch
+        {
+        }
+    }
+
+    private IEstimator<ITransformer> BuildFeaturePipeline()
+    {
+        return _mlContext.Transforms.Categorical.OneHotEncoding("MaturityBucketEncoded", "MaturityBucket")
+            .Append(_mlContext.Transforms.Concatenate("Features",
+                "IsWeekend", "TargetCount", "CurrentStreak", "Momentum", "FatigueScore", "StreakVolatility", "RecentSuccessRate", "UserOverallRate", "ContextDriftScore", "RecoverySpeed", "LogHabitAge", "SynergyScore", "IsHoliday", "SinDayOfYear", "CosDayOfYear", "RetroactiveLogRatio", "CueStrengthScore", "MaturityBucketEncoded"));
+    }
+
+    private HabitEnsemblePrediction PredictWithEnsemble(HabitModelInput input, ExternalHabitEnsembleOutput? externalPrediction = null)
+    {
+        List<WeightedHabitModel> models;
+        bool externalReady;
+        lock (_trainingLock)
+        {
+            models = _ensembleModels.ToList();
+            externalReady = _externalEnsembleReady;
+        }
+
+        if (!models.Any() && !externalReady)
+        {
+            return new HabitEnsemblePrediction();
+        }
+
+        double weightedSum = 0;
+        double totalWeight = 0;
+        var modelProbabilities = new Dictionary<string, float>();
+
+        foreach (var weightedModel in models)
+        {
+            var predictionEngine = _mlContext.Model.CreatePredictionEngine<HabitModelInput, HabitModelOutput>(weightedModel.Model);
+            var result = predictionEngine.Predict(input);
+            var probability = Math.Clamp(result.Probability, 0f, 1f);
+
+            modelProbabilities[weightedModel.Name] = probability;
+            weightedSum += probability * weightedModel.Weight;
+            totalWeight += weightedModel.Weight;
+        }
+
+        if (externalReady)
+        {
+            externalPrediction ??= TryPredictExternalEnsemble(input);
+            if (externalPrediction.StackedProbability.HasValue)
+            {
+                var probability = Math.Clamp(externalPrediction.StackedProbability.Value, 0f, 1f);
+                modelProbabilities["StackedPython"] = probability;
+                weightedSum += probability * 0.45;
+                totalWeight += 0.45;
+            }
+            else
+            {
+                foreach (var (modelName, probability) in externalPrediction.ModelProbabilities)
+                {
+                    var clampedProbability = Math.Clamp(probability, 0f, 1f);
+                    modelProbabilities[modelName] = clampedProbability;
+                    weightedSum += clampedProbability;
+                    totalWeight += 1;
+                }
+            }
+        }
+
+        return new HabitEnsemblePrediction
+        {
+            Probability = totalWeight > 0 ? weightedSum / totalWeight : 0,
+            ModelProbabilities = modelProbabilities,
+            ShapContributions = externalPrediction?.ShapContributions ?? new List<ShapContribution>()
+        };
+    }
+
+    private string GenerateEnsembleSummary(HabitEnsemblePrediction prediction)
+    {
+        if (!prediction.ModelProbabilities.Any()) return string.Empty;
+
+        var parts = prediction.ModelProbabilities
+            .Select(p => $"{p.Key}: {Math.Round(p.Value * 100, 1)}%")
+            .ToList();
+
+        return $" Ensemble [{string.Join(", ", parts)}].";
+    }
+
+    private async Task<bool> TryTrainExternalEnsembleAsync(List<HabitModelInput> trainingData)
+    {
+        var scriptPath = GetExternalEnsembleScriptPath();
+        if (!File.Exists(scriptPath)) return false;
+
+        var modelDirectory = Path.Combine(Path.GetTempPath(), "HabitTracker");
+        Directory.CreateDirectory(modelDirectory);
+
+        var trainingDataPath = Path.Combine(modelDirectory, "habit_ensemble_training.json");
+        var modelPath = Path.Combine(modelDirectory, "habit_ensemble_python.pkl");
+
+        await File.WriteAllTextAsync(trainingDataPath, JsonSerializer.Serialize(trainingData));
+
+        var result = await RunPythonEnsembleAsync(scriptPath, "train", trainingDataPath, modelPath, timeoutMilliseconds: 45000);
+        if (!result.Success) return false;
+
+        _externalEnsembleModelPath = modelPath;
+        return true;
+    }
+
+    private ExternalHabitEnsembleOutput TryPredictExternalEnsemble(HabitModelInput input)
+    {
+        var scriptPath = GetExternalEnsembleScriptPath();
+        var modelPath = _externalEnsembleModelPath;
+        if (modelPath == null || !File.Exists(scriptPath) || !File.Exists(modelPath))
+        {
+            return new ExternalHabitEnsembleOutput();
+        }
+
+        var inputPath = Path.Combine(Path.GetTempPath(), "HabitTracker", $"habit_ensemble_input_{Guid.NewGuid():N}.json");
+        File.WriteAllText(inputPath, JsonSerializer.Serialize(input));
+
+        try
+        {
+            var result = RunPythonEnsembleAsync(scriptPath, "predict", modelPath, inputPath, timeoutMilliseconds: 7000)
+                .GetAwaiter()
+                .GetResult();
+
+            if (!result.Success || string.IsNullOrWhiteSpace(result.Output))
+            {
+                return new ExternalHabitEnsembleOutput();
+            }
+
+            return JsonSerializer.Deserialize<ExternalHabitEnsembleOutput>(
+                result.Output,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+            ) ?? new ExternalHabitEnsembleOutput();
+        }
+        catch
+        {
+            return new ExternalHabitEnsembleOutput();
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(inputPath)) File.Delete(inputPath);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private List<ExternalHabitEnsembleOutput> TryPredictExternalEnsembleBatch(List<HabitModelInput> inputs)
+    {
+        var scriptPath = GetExternalEnsembleScriptPath();
+        var modelPath = _externalEnsembleModelPath;
+        if (modelPath == null || inputs.Count == 0 || !File.Exists(scriptPath) || !File.Exists(modelPath))
+        {
+            return new List<ExternalHabitEnsembleOutput>();
+        }
+
+        var inputPath = Path.Combine(Path.GetTempPath(), "HabitTracker", $"habit_ensemble_batch_{Guid.NewGuid():N}.json");
+        File.WriteAllText(inputPath, JsonSerializer.Serialize(inputs));
+
+        try
+        {
+            var result = RunPythonEnsembleAsync(scriptPath, "predict", modelPath, inputPath, timeoutMilliseconds: 12000)
+                .GetAwaiter()
+                .GetResult();
+
+            if (!result.Success || string.IsNullOrWhiteSpace(result.Output))
+            {
+                return new List<ExternalHabitEnsembleOutput>();
+            }
+
+            var batch = JsonSerializer.Deserialize<ExternalHabitEnsembleBatchOutput>(
+                result.Output,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+            );
+
+            return batch?.Predictions ?? new List<ExternalHabitEnsembleOutput>();
+        }
+        catch
+        {
+            return new List<ExternalHabitEnsembleOutput>();
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(inputPath)) File.Delete(inputPath);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private string GetExternalEnsembleScriptPath()
+    {
+        return Path.Combine(AppContext.BaseDirectory, "ML", "habit_ensemble.py");
+    }
+
+    private static async Task<(bool Success, string Output)> RunPythonEnsembleAsync(
+        string scriptPath,
+        string command,
+        string firstArgument,
+        string secondArgument,
+        int timeoutMilliseconds)
+    {
+        try
+        {
+            using var process = new Process();
+            process.StartInfo = new ProcessStartInfo
+            {
+                FileName = "python",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            process.StartInfo.ArgumentList.Add(scriptPath);
+            process.StartInfo.ArgumentList.Add(command);
+            process.StartInfo.ArgumentList.Add(firstArgument);
+            process.StartInfo.ArgumentList.Add(secondArgument);
+
+            process.Start();
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+
+            var exited = await Task.Run(() => process.WaitForExit(timeoutMilliseconds));
+            if (!exited)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return (false, string.Empty);
+            }
+
+            var stdout = await stdoutTask;
+            _ = await stderrTask;
+
+            return (process.ExitCode == 0, stdout);
+        }
+        catch
+        {
+            return (false, string.Empty);
+        }
     }
 
     public async Task<double> PredictSuccessProbabilityAsync(Habit habit)
@@ -149,16 +484,202 @@ public class HabitPredictionService
     public async Task<(double Probability, string Explanation)> PredictWithShapAsync(Habit habit)
     {
         if (!_isTrained) await TrainModelAsync();
-        if (_model == null) return (0, string.Empty);
+        if (!_ensembleModels.Any()) return (0, string.Empty);
 
-        var predictionEngine = _mlContext.Model.CreatePredictionEngine<HabitModelInput, HabitModelOutput>(_model);
+        var input = await BuildPredictionInputAsync(habit);
+        var ensemblePrediction = PredictWithEnsemble(input);
+        double prob = Math.Round(ensemblePrediction.Probability * 100, 1);
+
+        string explanation = GenerateNaturalExplanation(input, prob, ensemblePrediction.ShapContributions);
+        explanation += GenerateEnsembleSummary(ensemblePrediction);
+
+        return (prob, explanation);
+    }
+
+    public async Task<Dictionary<string, (double Probability, string Explanation)>> PredictManyWithShapAsync(List<Habit> habits)
+    {
+        if (!_isTrained) await TrainModelAsync();
+
+        var result = new Dictionary<string, (double Probability, string Explanation)>();
+        if (!_ensembleModels.Any())
+        {
+            return result;
+        }
+
+        var userIds = habits.Select(h => h.UserId).Distinct().ToList();
+        var allEntries = await _entriesCollection.Find(e => userIds.Contains(e.UserId)).ToListAsync();
+        var entriesByUser = allEntries
+            .GroupBy(e => e.UserId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+        var entriesByHabit = allEntries
+            .Where(e => e.HabitId != null)
+            .GroupBy(e => e.HabitId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var inputs = new List<(string HabitId, HabitModelInput Input)>();
+        foreach (var habit in habits)
+        {
+            if (habit.Id == null) continue;
+            entriesByUser.TryGetValue(habit.UserId, out var userEntries);
+            entriesByHabit.TryGetValue(habit.Id, out var habitEntries);
+
+            inputs.Add((
+                habit.Id,
+                BuildPredictionInputCached(habit, habitEntries ?? new List<HabitEntry>(), userEntries ?? new List<HabitEntry>())
+            ));
+        }
+
+        var uncachedInputs = inputs
+            .Where(i => !_memoryCache.TryGetValue(BuildPredictionCacheKey(i.Input), out HabitEnsemblePrediction? _))
+            .ToList();
+        var externalPredictions = TryPredictExternalEnsembleBatch(uncachedInputs.Select(i => i.Input).ToList());
+        var externalPredictionsByCacheKey = new Dictionary<string, ExternalHabitEnsembleOutput>();
+        for (var i = 0; i < uncachedInputs.Count && i < externalPredictions.Count; i++)
+        {
+            externalPredictionsByCacheKey[BuildPredictionCacheKey(uncachedInputs[i].Input)] = externalPredictions[i];
+        }
+
+        for (var i = 0; i < inputs.Count; i++)
+        {
+            var cacheKey = BuildPredictionCacheKey(inputs[i].Input);
+            if (_memoryCache.TryGetValue(cacheKey, out HabitEnsemblePrediction? cachedPrediction) && cachedPrediction != null)
+            {
+                var cachedProbability = Math.Round(cachedPrediction.Probability * 100, 1);
+                result[inputs[i].HabitId] = (
+                    cachedProbability,
+                    GenerateNaturalExplanation(inputs[i].Input, cachedProbability, cachedPrediction.ShapContributions) + GenerateEnsembleSummary(cachedPrediction)
+                );
+                continue;
+            }
+
+            externalPredictionsByCacheKey.TryGetValue(cacheKey, out var externalPrediction);
+
+            var ensemblePrediction = PredictWithEnsemble(inputs[i].Input, externalPrediction);
+            _memoryCache.Set(cacheKey, ensemblePrediction, PredictionCacheTtl);
+            var probability = Math.Round(ensemblePrediction.Probability * 100, 1);
+            var explanation = GenerateNaturalExplanation(inputs[i].Input, probability, ensemblePrediction.ShapContributions) + GenerateEnsembleSummary(ensemblePrediction);
+            result[inputs[i].HabitId] = (probability, explanation);
+        }
+
+        return result;
+    }
+
+    private static string BuildPredictionCacheKey(HabitModelInput input)
+    {
+        return JsonSerializer.Serialize(input);
+    }
+
+    public async Task<(bool ShouldAsk, string? Reason)> ShouldRequestConfidenceAsync(Habit habit, double probability)
+    {
+        if (habit.Id == null) return (false, null);
+        if (probability < 35 || probability > 65) return (false, null);
+
+        var today = DateTime.UtcNow.Date;
+        var recentEntries = await _entriesCollection.Find(e =>
+            e.HabitId == habit.Id &&
+            e.UserId == habit.UserId &&
+            e.Date >= today.AddDays(-30) &&
+            e.Date <= today
+        ).ToListAsync();
+
+        if (recentEntries.Count < 10) return (false, null);
+        if (recentEntries.Any(e => e.Date.Date == today && e.ConfidenceScore.HasValue)) return (false, null);
+
+        var recentActiveEntries = recentEntries
+            .Where(e => habit.ActiveDays.Contains(e.Date.DayOfWeek) && e.Date.Date < today)
+            .OrderByDescending(e => e.Date)
+            .Take(3)
+            .ToList();
+
+        var unstableRecentPattern = recentActiveEntries.Count >= 3 &&
+            recentActiveEntries.Any(e => e.IsFullyCompleted) &&
+            recentActiveEntries.Any(e => !e.IsFullyCompleted);
+
+        if (!unstableRecentPattern) return (false, null);
+
+        return (true, "uncertainty_sampling");
+    }
+
+    public async Task<Dictionary<string, (bool ShouldAsk, string? Reason)>> GetConfidencePromptsAsync(
+        List<Habit> habits,
+        Dictionary<string, (double Probability, string Explanation)> predictions)
+    {
+        var result = new Dictionary<string, (bool ShouldAsk, string? Reason)>();
+        var today = DateTime.UtcNow.Date;
+        var userIds = habits.Select(h => h.UserId).Distinct().ToList();
+        var recentEntries = await _entriesCollection.Find(e =>
+            userIds.Contains(e.UserId) &&
+            e.Date >= today.AddDays(-30) &&
+            e.Date <= today
+        ).ToListAsync();
+        var recentEntriesByHabit = recentEntries
+            .Where(e => e.HabitId != null)
+            .GroupBy(e => e.HabitId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var habit in habits)
+        {
+            if (habit.Id == null || !predictions.TryGetValue(habit.Id, out var prediction))
+            {
+                continue;
+            }
+
+            recentEntriesByHabit.TryGetValue(habit.Id, out var habitEntries);
+            result[habit.Id] = ShouldRequestConfidence(habit, prediction.Probability, habitEntries ?? new List<HabitEntry>(), today);
+        }
+
+        return result;
+    }
+
+    private (bool ShouldAsk, string? Reason) ShouldRequestConfidence(
+        Habit habit,
+        double probability,
+        List<HabitEntry> recentEntries,
+        DateTime today)
+    {
+        if (habit.Id == null) return (false, null);
+        if (probability < 35 || probability > 65) return (false, null);
+        if (recentEntries.Count < 10) return (false, null);
+        if (recentEntries.Any(e => e.Date.Date == today && e.ConfidenceScore.HasValue)) return (false, null);
+
+        var recentActiveEntries = recentEntries
+            .Where(e => habit.ActiveDays.Contains(e.Date.DayOfWeek) && e.Date.Date < today)
+            .OrderByDescending(e => e.Date)
+            .Take(3)
+            .ToList();
+
+        var unstableRecentPattern = recentActiveEntries.Count >= 3 &&
+            recentActiveEntries.Any(e => e.IsFullyCompleted) &&
+            recentActiveEntries.Any(e => !e.IsFullyCompleted);
+
+        if (!unstableRecentPattern) return (false, null);
+
+        return (true, "uncertainty_sampling");
+    }
+
+    private async Task<HabitModelInput> BuildPredictionInputAsync(Habit habit)
+    {
+        var featureCacheKey = BuildFeatureCacheKey(habit);
+        if (_memoryCache.TryGetValue(featureCacheKey, out HabitModelInput? cachedInput) && cachedInput != null)
+        {
+            return cachedInput;
+        }
+
+        var habitHistory = await _entriesCollection.Find(e => e.HabitId == habit.Id).ToListAsync();
+        var allUserHistory = await _entriesCollection.Find(e => e.UserId == habit.UserId).ToListAsync();
+        return BuildPredictionInputCached(habit, habitHistory, allUserHistory);
+    }
+
+    private HabitModelInput BuildPredictionInputCached(Habit habit, List<HabitEntry> habitHistory, List<HabitEntry> allUserHistory)
+    {
+        var featureCacheKey = BuildFeatureCacheKey(habit);
+        if (_memoryCache.TryGetValue(featureCacheKey, out HabitModelInput? cachedInput) && cachedInput != null)
+        {
+            return cachedInput;
+        }
 
         var userId = habit.UserId;
         var today = DateTime.UtcNow.Date;
-        
-        var habitHistory = await _entriesCollection.Find(e => e.HabitId == habit.Id).ToListAsync();
-        var allUserHistory = await _entriesCollection.Find(e => e.UserId == habit.UserId).ToListAsync();
-
         float currentStreak = CalculateStreakForDate(habitHistory, habit.Id!, today);
         float prevStreak = CalculateStreakForDate(habitHistory, habit.Id!, today.AddDays(-7));
         float momentum = currentStreak - prevStreak;
@@ -211,16 +732,28 @@ public class HabitPredictionService
             CueStrengthScore = cueStrength
         };
 
-        var result = predictionEngine.Predict(input);
-        double prob = Math.Round(result.Probability * 100, 1);
-
-        string explanation = GenerateNaturalExplanation(input, prob);
-
-        return (prob, explanation);
+        _memoryCache.Set(featureCacheKey, input, FeatureCacheTtl);
+        return input;
     }
 
-    private string GenerateNaturalExplanation(HabitModelInput f, double prob)
+    private string BuildFeatureCacheKey(Habit habit)
     {
+        var version = _userCacheVersions.GetValueOrDefault(habit.UserId, 0);
+        return $"habit_features:{habit.UserId}:{habit.Id}:{DateTime.UtcNow.Date:yyyyMMdd}:{version}";
+    }
+
+    public void InvalidateUserPredictionCache(string userId)
+    {
+        _userCacheVersions.AddOrUpdate(userId, 1, (_, current) => current + 1);
+    }
+
+    private string GenerateNaturalExplanation(HabitModelInput f, double prob, List<ShapContribution>? shapContributions = null)
+    {
+        if (shapContributions != null && shapContributions.Any())
+        {
+            return GenerateShapExplanation(shapContributions, prob);
+        }
+
         var pos = new List<string>();
         var neg = new List<string>();
 
@@ -253,6 +786,44 @@ public class HabitPredictionService
         if (!pos.Any() && !neg.Any()) return $"Ймовірність {prob}%, стабільний ритм ⚪";
 
         return text;
+    }
+
+    private string GenerateShapExplanation(List<ShapContribution> contributions, double prob)
+    {
+        var condition = prob < 45 ? "низька" : prob > 70 ? "висока" : "середня";
+        var top = contributions
+            .OrderByDescending(c => Math.Abs(c.Value))
+            .Take(5)
+            .Select(c => $"{DescribeFeature(c.Feature)} ({(c.Value >= 0 ? "+" : "-")}{Math.Abs(c.Value):0.##})")
+            .ToList();
+
+        return $"Ймовірність {condition} ({prob}%), ключові внески моделі: {string.Join(", ", top)}.";
+    }
+
+    private static string DescribeFeature(string feature)
+    {
+        return feature switch
+        {
+            "IsWeekend" => "вихідний день",
+            "TargetCount" => "цільова кількість",
+            "CurrentStreak" => "поточний стрік",
+            "Momentum" => "динаміка стріка",
+            "FatigueScore" => "загальна втома",
+            "StreakVolatility" => "нестабільність стріка",
+            "RecentSuccessRate" => "останні успіхи",
+            "UserOverallRate" => "загальний темп користувача",
+            "ContextDriftScore" => "зміна контексту",
+            "RecoverySpeed" => "швидкість відновлення",
+            "LogHabitAge" => "вік звички",
+            "SynergyScore" => "синергія з іншими звичками",
+            "IsHoliday" => "святковий день",
+            "SinDayOfYear" => "сезонність",
+            "CosDayOfYear" => "сезонність",
+            "RetroactiveLogRatio" => "записи заднім числом",
+            "CueStrengthScore" => "стабільність часу виконання",
+            _ when feature.StartsWith("MaturityBucket=") => $"стадія звички {feature.Split('=').Last()}",
+            _ => feature
+        };
     }
 
     private void CalculateUserRates(List<Habit> habits, List<HabitEntry> entries)

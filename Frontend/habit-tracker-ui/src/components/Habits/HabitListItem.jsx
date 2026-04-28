@@ -10,7 +10,7 @@ const HabitListItem = ({ habit, onEdit, onDelete, onArchiveToggle, onHabitUpdate
     const [showFailReasonModal, setShowFailReasonModal] = useState(false);
     const [confidenceSubmitted, setConfidenceSubmitted] = useState(false);
 
-    const isUncertain = habit.successProbability >= 35 && habit.successProbability <= 65;
+    const isUncertain = Boolean(habit.shouldAskConfidence);
 
     const handleDelete = () => {
         if (window.confirm(`Видалити "${habit.name}"?`)) {

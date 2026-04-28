@@ -40,7 +40,9 @@ public record HabitDto(
     bool IsArchived,
     DateTime CreatedAt,
     double SuccessProbability = 0,
-    string? ShapExplanation = null
+    string? ShapExplanation = null,
+    bool ShouldAskConfidence = false,
+    string? ActiveLearningReason = null
 );
 
 public record TrackHabitDto([Required] DateTime Date, [Required][Range(0,100)] int CompletedCount, string? FailureReason = null);

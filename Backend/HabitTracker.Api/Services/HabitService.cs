@@ -10,13 +10,15 @@ public class HabitService
 {
     private readonly IMongoCollection<Habit> _habitsCollection;
     private readonly IMongoCollection<HabitEntry> _habitEntriesCollection;
+    private readonly HabitPredictionService _predictionService;
 
-    public HabitService(IOptions<MongoDbSettings> mongoDbSettings)
+    public HabitService(IOptions<MongoDbSettings> mongoDbSettings, HabitPredictionService predictionService)
     {
         var mongoClient = new MongoClient(mongoDbSettings.Value.ConnectionString);
         var mongoDatabase = mongoClient.GetDatabase(mongoDbSettings.Value.DatabaseName);
         _habitsCollection = mongoDatabase.GetCollection<Habit>("Habits");
         _habitEntriesCollection = mongoDatabase.GetCollection<HabitEntry>("HabitEntries");
+        _predictionService = predictionService;
     }
 
     public async Task<HabitDto?> CreateHabitAsync(CreateHabitDto createDto, string userId)
@@ -35,6 +37,7 @@ public class HabitService
             CreatedAt = DateTime.UtcNow
         };
         await _habitsCollection.InsertOneAsync(habit);
+        _predictionService.InvalidateUserPredictionCache(userId);
         return MapToHabitDto(habit);
     }
 
@@ -78,13 +81,20 @@ public class HabitService
         var combinedUpdate = updateBuilder.Combine(updates);
         var result = await _habitsCollection.UpdateOneAsync(filter, combinedUpdate);
 
-        return result.ModifiedCount > 0 ? await GetHabitByIdAsync(habitId, userId) : null;
+        if (result.ModifiedCount > 0)
+        {
+            _predictionService.InvalidateUserPredictionCache(userId);
+            return await GetHabitByIdAsync(habitId, userId);
+        }
+
+        return null;
     }
 
     public async Task<bool> DeleteHabitAsync(string habitId, string userId)
     {
         await _habitEntriesCollection.DeleteManyAsync(e => e.HabitId == habitId && e.UserId == userId);
         var result = await _habitsCollection.DeleteOneAsync(h => h.Id == habitId && h.UserId == userId);
+        if (result.DeletedCount > 0) _predictionService.InvalidateUserPredictionCache(userId);
         return result.DeletedCount > 0;
     }
 
@@ -109,6 +119,7 @@ public class HabitService
             existingEntry.FailureReason = trackDto.FailureReason;
             existingEntry.LastModified = DateTime.UtcNow;
             await _habitEntriesCollection.ReplaceOneAsync(filter, existingEntry);
+            _predictionService.InvalidateUserPredictionCache(userId);
             return MapToHabitEntryDto(existingEntry);
         }
         else
@@ -124,6 +135,7 @@ public class HabitService
                 LastModified = DateTime.UtcNow
             };
             await _habitEntriesCollection.InsertOneAsync(newEntry);
+            _predictionService.InvalidateUserPredictionCache(userId);
             return MapToHabitEntryDto(newEntry);
         }
     }
@@ -146,6 +158,7 @@ public class HabitService
             .SetOnInsert(e => e.IsFullyCompleted, false);
 
         var result = await _habitEntriesCollection.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
+        if (result.ModifiedCount > 0 || result.UpsertedId != null) _predictionService.InvalidateUserPredictionCache(userId);
         return result.ModifiedCount > 0 || result.UpsertedId != null;
     }
 
@@ -213,6 +226,8 @@ public class HabitService
             habit.IsArchived, 
             habit.CreatedAt,
             0,
+            null,
+            false,
             null
         );
 
