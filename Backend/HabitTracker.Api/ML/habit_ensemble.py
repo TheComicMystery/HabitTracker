@@ -36,10 +36,73 @@ NUMERIC_FEATURES = [
     "CosDayOfYear",
     "RetroactiveLogRatio",
     "CueStrengthScore",
+    "EndogenousFailureRate14d",
+    "ExogenousFailureRate14d",
+    "MixedFailureRate14d",
+    "EndogenousFailureRecency",
+    "ExogenousFailureRecency",
+    "FailureDecayImpact",
+    "SuccessRate3d",
+    "SuccessRate7d",
+    "SuccessRate30d",
+    "DaysSinceLastSuccess",
+    "DaysSinceLastFailure",
+    "ConsecutiveMisses",
+    "WeekdaySuccessRate",
+    "WeekendSuccessGap",
+    "ActiveDaysPerWeek",
+    "ScheduleDensity",
+    "IsDailyHabit",
+    "IsMultiCountHabit",
+    "IsWorkdayHabit",
+    "WeekendRecentRisk",
+    "FatigueRecentRisk",
+    "DriftVolatilityRisk",
+    "RecoveryPressure",
+    "StreakMomentumSignal",
+    "HabitIntensity",
+    "SubjectiveDifficulty",
+    "DisciplineSelf",
+    "WeekendVulnerability",
+    "Lag1Completed",
+    "Lag2Completed",
+    "Lag3Completed",
+    "Lag4Completed",
+    "Lag5Completed",
+    "Lag6Completed",
+    "Lag7Completed",
+    "Lag8Completed",
+    "Lag9Completed",
+    "Lag10Completed",
+    "Lag11Completed",
+    "Lag12Completed",
+    "Lag13Completed",
+    "Lag14Completed",
+    "MissPattern7d",
+    "LagTrend14d",
 ]
 
 MATURITY_BUCKETS = ["Week1", "Week2", "Month1", "Month3", "Established"]
-FEATURE_NAMES = NUMERIC_FEATURES + [f"MaturityBucket={bucket}" for bucket in MATURITY_BUCKETS]
+HABIT_CATEGORIES = [
+    "Uncategorized",
+    "Health",
+    "Learning",
+    "Finance",
+    "Creativity",
+    "Mind",
+    "Productivity",
+    "Home",
+    "Relationships",
+]
+PREFERRED_TIMES = ["morning", "day", "evening", "flexible"]
+INITIAL_FAILURE_REASONS = ["none", "time", "energy", "mood", "motivation", "health", "events", "forgetting"]
+FEATURE_NAMES = (
+    NUMERIC_FEATURES
+    + [f"MaturityBucket={bucket}" for bucket in MATURITY_BUCKETS]
+    + [f"HabitCategory={category}" for category in HABIT_CATEGORIES]
+    + [f"PreferredTimeOfDay={time}" for time in PREFERRED_TIMES]
+    + [f"InitialFailureReason={reason}" for reason in INITIAL_FAILURE_REASONS]
+)
 
 
 class SimpleTabularNet(nn.Module):
@@ -68,6 +131,12 @@ def vectorize(items):
         row = [float(_get(item, name, 0.0) or 0.0) for name in NUMERIC_FEATURES]
         bucket = str(_get(item, "MaturityBucket", ""))
         row.extend(1.0 if bucket == known_bucket else 0.0 for known_bucket in MATURITY_BUCKETS)
+        category = str(_get(item, "HabitCategory", "Uncategorized") or "Uncategorized")
+        row.extend(1.0 if category == known_category else 0.0 for known_category in HABIT_CATEGORIES)
+        preferred_time = str(_get(item, "PreferredTimeOfDay", "flexible") or "flexible").lower()
+        row.extend(1.0 if preferred_time == known_time else 0.0 for known_time in PREFERRED_TIMES)
+        initial_reason = str(_get(item, "InitialFailureReason", "none") or "none").lower()
+        row.extend(1.0 if initial_reason == known_reason else 0.0 for known_reason in INITIAL_FAILURE_REASONS)
         rows.append(row)
     return np.asarray(rows, dtype=np.float32)
 
@@ -98,7 +167,8 @@ def train_torch_nn(x, y):
     y_tensor = torch.tensor(y, dtype=torch.float32)
 
     model.train()
-    for _ in range(140):
+    epochs = 35 if len(y) > 2000 else 90
+    for _ in range(epochs):
         optimizer.zero_grad()
         loss = loss_fn(model(x_tensor), y_tensor)
         loss.backward()
@@ -128,7 +198,7 @@ def predict_torch_nn(model_bundle, x):
 
 def train_xgboost(x, y):
     model = XGBClassifier(
-        n_estimators=140,
+        n_estimators=50,
         max_depth=3,
         learning_rate=0.06,
         subsample=0.9,
@@ -181,7 +251,7 @@ def train_stacked_ensemble(x, y):
     class_counts = np.bincount(y)
     min_class_count = int(class_counts[class_counts > 0].min())
     n_splits = min(5, min_class_count)
-    use_oof = n_splits >= 2 and len(y) >= 30
+    use_oof = n_splits >= 2 and 30 <= len(y) <= 2000
 
     model_names = ["XGBoost", "LogisticRegression"]
     if torch is not None:
@@ -303,7 +373,7 @@ def try_export_onnx(models, meta_model, meta_feature_names, output_path):
         return None
 
 
-def predict_one(bundle, x):
+def predict_one(bundle, x, include_shap=True):
     models = bundle.get("models", {})
     output = {}
 
@@ -338,7 +408,7 @@ def predict_one(bundle, x):
     return {
         "modelProbabilities": output,
         "stackedProbability": stacked_probability,
-        "shapContributions": xgboost_contributions(models["XGBoost"], x) if "XGBoost" in models else [],
+        "shapContributions": xgboost_contributions(models["XGBoost"], x) if include_shap and "XGBoost" in models else [],
     }
 
 
@@ -351,7 +421,7 @@ def predict(model_path, input_path):
 
     if isinstance(payload, list):
         x = vectorize(payload)
-        predictions = [predict_one(bundle, x[index : index + 1]) for index in range(len(payload))]
+        predictions = [predict_one(bundle, x[index : index + 1], include_shap=False) for index in range(len(payload))]
         print(json.dumps({"predictions": predictions}))
     else:
         x = vectorize([payload])

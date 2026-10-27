@@ -28,16 +28,16 @@
 }
 
 [data-theme='dark'] {
-  --bg-primary: #0b0c15;
-  --bg-secondary: #151725;
-  --bg-card: #151725;
-  --bg-hover: #1e2130;
+  --bg-primary: #0b1020;
+  --bg-secondary: #121a2b;
+  --bg-card: #151e31;
+  --bg-hover: #1f2a40;
   
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
   
-  --border-color: #2e3245;
+  --border-color: #2d3850;
   
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.3);
@@ -136,6 +136,12 @@ input:focus {
   -webkit-text-fill-color: transparent;
 }
 
+[data-theme='dark'] .page-title {
+  background: none;
+  -webkit-text-fill-color: var(--text-primary);
+  color: var(--text-primary);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -148,4 +154,28 @@ input:focus {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
+}
+
+@media (max-width: 760px) {
+  .container {
+    padding: 0 14px;
+  }
+
+  .main-content {
+    padding-top: 14px;
+    padding-bottom: 18px;
+  }
+
+  .button {
+    min-height: 42px;
+    padding: 0.68rem 1rem;
+    font-size: 0.9rem;
+  }
+
+  input,
+  textarea,
+  select {
+    font-size: 0.94rem;
+    padding: 11px 13px;
+  }
 }

@@ -1,0 +1,213 @@
+.floating-pomodoro {
+  position: fixed;
+  right: 26px;
+  bottom: 22px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.floating-pomodoro-button {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  position: relative;
+  color: white;
+  background: linear-gradient(145deg, #ff7a70, #e53935 68%, #c62828);
+  box-shadow: 0 14px 30px rgb(229 57 53 / 0.26), 0 0 0 8px rgb(239 68 68 / 0.08);
+  border: 3px solid rgb(255 255 255 / 0.92);
+  font-size: 0.98rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.floating-pomodoro-button::before {
+  content: '';
+  position: absolute;
+  width: 22px;
+  height: 13px;
+  margin-top: -49px;
+  margin-left: 2px;
+  background: #22c55e;
+  border-radius: 18px 4px 18px 4px;
+  transform: rotate(-16deg);
+}
+
+.floating-pomodoro-button:hover {
+  transform: translateY(-2px) scale(1.02);
+}
+
+.floating-pomodoro-panel {
+  width: 326px;
+  padding: 16px;
+  border-radius: 22px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 24px 70px rgb(15 23 42 / 0.22);
+}
+
+[data-theme='dark'] .floating-pomodoro-panel {
+  background: #151c2d;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.48);
+}
+
+.floating-pomodoro-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.floating-pomodoro-header strong {
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.floating-pomodoro-header button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.floating-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 5px;
+  background: var(--bg-hover);
+  border-radius: 14px;
+  margin-bottom: 12px;
+}
+
+.floating-mode-tabs button {
+  min-height: 34px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 850;
+  padding: 0 8px;
+}
+
+.floating-mode-tabs button.active {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.floating-pomodoro-panel select {
+  width: 100%;
+  min-height: 42px;
+  margin-bottom: 14px;
+}
+
+.floating-timer-ring {
+  width: 168px;
+  height: 168px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle, var(--bg-card) 58%, transparent 59%),
+    conic-gradient(#ef4444 var(--progress), var(--bg-hover) 0);
+  border: 1px solid var(--border-color);
+}
+
+.floating-timer-ring > div {
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+
+.floating-timer-ring span {
+  font-size: 2.35rem;
+  font-weight: 950;
+  color: var(--text-primary);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.floating-timer-ring small {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-weight: 850;
+}
+
+.floating-timer-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.floating-pomodoro-message {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.app-container.mobile-simulation .floating-pomodoro {
+  right: 18px;
+  bottom: 18px;
+}
+
+.app-container.mobile-simulation .floating-pomodoro-panel {
+  width: min(398px, calc(100vw - 24px));
+}
+
+@media (max-width: 760px) {
+  .floating-pomodoro {
+    right: 14px;
+    bottom: 18px;
+  }
+}
+
+@media (max-width: 520px) {
+  .floating-pomodoro-button {
+    width: 56px;
+    height: 56px;
+    font-size: 0.9rem;
+  }
+
+  .floating-pomodoro-button::before {
+    width: 20px;
+    height: 12px;
+    margin-top: -45px;
+  }
+
+  .floating-pomodoro-panel {
+    width: calc(100vw - 28px);
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .floating-timer-ring {
+    width: 142px;
+    height: 142px;
+  }
+
+  .floating-timer-ring > div {
+    width: 112px;
+    height: 112px;
+  }
+
+  .floating-timer-ring span {
+    font-size: 2rem;
+  }
+}

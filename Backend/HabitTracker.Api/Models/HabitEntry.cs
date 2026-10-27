@@ -3,6 +3,7 @@ using MongoDB.Bson.Serialization.Attributes;
 
 namespace HabitTracker.Api.Models;
 
+[BsonIgnoreExtraElements]
 public class HabitEntry
 {
     [BsonId]
@@ -20,5 +21,6 @@ public class HabitEntry
     public bool IsFullyCompleted { get; set; } = false; 
     public string? FailureReason { get; set; }
     public int? ConfidenceScore { get; set; }
+    public string? ConfidenceReason { get; set; }
     public DateTime LastModified { get; set; } = DateTime.UtcNow;
 }

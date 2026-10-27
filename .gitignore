@@ -1,0 +1,12 @@
+# Local IDE state and generated output
+.vs/
+.vscode/
+.idea/
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/__pycache__/
+*.pyc
+*.log
+**/MLModels/

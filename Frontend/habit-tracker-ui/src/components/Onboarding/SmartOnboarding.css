@@ -1,0 +1,166 @@
+.onboarding-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(14px);
+}
+
+.onboarding-card {
+  width: min(620px, 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 28px;
+  padding: 28px;
+  background:
+    radial-gradient(circle at 82% 12%, rgba(99, 102, 241, 0.16), transparent 34%),
+    var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+}
+
+.onboarding-head,
+.onboarding-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.onboarding-kicker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 850;
+  font-size: 0.86rem;
+}
+
+.onboarding-skip {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.onboarding-step {
+  min-height: 340px;
+  padding: 28px 0 22px;
+}
+
+.onboarding-step h2 {
+  max-width: 520px;
+  margin: 0 0 10px;
+  font-size: clamp(1.8rem, 4vw, 2.5rem);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.onboarding-step p {
+  max-width: 520px;
+  margin: 0 0 24px;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+.range-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px 16px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 18px;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.range-field span {
+  color: var(--text-primary);
+  font-weight: 750;
+}
+
+.range-field strong {
+  color: var(--color-primary);
+}
+
+.range-field input {
+  grid-column: 1 / -1;
+  accent-color: var(--color-primary);
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.choice-grid.reason-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.choice-grid button {
+  min-height: 54px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.choice-grid button.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: white;
+  box-shadow: 0 14px 30px rgba(79, 70, 229, 0.24);
+}
+
+.onboarding-dots {
+  display: flex;
+  gap: 8px;
+}
+
+.onboarding-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border-color);
+}
+
+.onboarding-dots span.active {
+  width: 24px;
+  background: var(--color-primary);
+}
+
+.onboarding-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  .onboarding-backdrop {
+    padding: 12px;
+    align-items: end;
+  }
+
+  .onboarding-card {
+    border-radius: 24px 24px 18px 18px;
+    padding: 20px;
+  }
+
+  .choice-grid,
+  .choice-grid.reason-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .onboarding-actions {
+    align-items: flex-end;
+  }
+}

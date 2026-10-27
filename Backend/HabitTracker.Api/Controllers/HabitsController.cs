@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using HabitTracker.Api.Models.DTOs;
 using HabitTracker.Api.Services;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace HabitTracker.Api.Controllers;
@@ -23,6 +24,7 @@ public class HabitsController : ControllerBase
     private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
     [HttpPost]
+    [EnableRateLimiting("mutations")]
     public async Task<IActionResult> CreateHabit(CreateHabitDto createDto)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -34,10 +36,16 @@ public class HabitsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetHabits([FromQuery] bool includeArchived = false)
+    [EnableRateLimiting("prediction")]
+    public async Task<IActionResult> GetHabits([FromQuery] bool includeArchived = false, [FromQuery] bool includePredictions = true)
     {
         var userId = GetUserId();
         var habits = await _habitService.GetHabitsAsync(userId, includeArchived);
+
+        if (!includePredictions)
+        {
+            return Ok(habits);
+        }
         
         var enrichedHabits = new List<HabitDto>();
         
@@ -47,9 +55,16 @@ public class HabitsController : ControllerBase
         {
             Id = habitDto.Id,
             UserId = habitDto.UserId,
+            Name = habitDto.Name,
+            Description = habitDto.Description,
+            Category = habitDto.Category,
+            Icon = habitDto.Icon,
+            Color = habitDto.Color,
             TargetCount = habitDto.TargetCount,
             ActiveDays = habitDto.ActiveDays,
-            StartDate = habitDto.StartDate
+            StartDate = habitDto.StartDate,
+            IsArchived = habitDto.IsArchived,
+            CreatedAt = habitDto.CreatedAt
         }).ToList();
 
         var predictions = await _mlService.PredictManyWithShapAsync(habitModels);
@@ -59,13 +74,19 @@ public class HabitsController : ControllerBase
         {
             predictions.TryGetValue(habitDto.Id, out var prediction);
             confidencePrompts.TryGetValue(habitDto.Id, out var confidencePrompt);
+            var shouldAsk = confidencePrompt.ShouldAsk && await _habitService.CanShowConfidencePromptAsync(habitDto.Id, userId);
+
+            if (shouldAsk)
+            {
+                await _habitService.RecordConfidencePromptAsync(habitDto.Id, userId, confidencePrompt.Reason);
+            }
             
             enrichedHabits.Add(habitDto with
             {
                 SuccessProbability = prediction.Probability,
                 ShapExplanation = prediction.Explanation,
-                ShouldAskConfidence = confidencePrompt.ShouldAsk,
-                ActiveLearningReason = confidencePrompt.Reason
+                ShouldAskConfidence = shouldAsk,
+                ActiveLearningReason = shouldAsk ? confidencePrompt.Reason : null
             });
         }
 
@@ -82,6 +103,7 @@ public class HabitsController : ControllerBase
     }
 
     [HttpPut("{habitId}")]
+    [EnableRateLimiting("mutations")]
     public async Task<IActionResult> UpdateHabit(string habitId, UpdateHabitDto updateDto)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -92,6 +114,7 @@ public class HabitsController : ControllerBase
     }
 
     [HttpDelete("{habitId}")]
+    [EnableRateLimiting("mutations")]
     public async Task<IActionResult> DeleteHabit(string habitId)
     {
         var userId = GetUserId();
@@ -101,6 +124,7 @@ public class HabitsController : ControllerBase
     }
 
     [HttpPost("{habitId}/track")]
+    [EnableRateLimiting("mutations")]
     public async Task<IActionResult> TrackHabit(string habitId, TrackHabitDto trackDto)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -111,6 +135,7 @@ public class HabitsController : ControllerBase
     }
 
     [HttpPost("{habitId}/confidence")]
+    [EnableRateLimiting("mutations")]
     public async Task<IActionResult> LogConfidence(string habitId, HabitConfidenceDto dto)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -139,5 +164,94 @@ public class HabitsController : ControllerBase
         }
         var entries = await _habitService.GetHabitEntriesForPeriodAsync(habitId, userId, startDate, endDate);
         return Ok(entries);
+    }
+
+    [HttpGet("{habitId}/stats")]
+    public async Task<IActionResult> GetHabitStats(string habitId, [FromQuery] int period = 30)
+    {
+        var stats = await _habitService.GetHabitStatsAsync(habitId, GetUserId(), period);
+        return stats == null ? NotFound() : Ok(stats);
+    }
+
+    [HttpGet("entries")]
+    public async Task<IActionResult> GetAllHabitEntries([FromQuery] DateTime startDate, [FromQuery] DateTime endDate)
+    {
+        var userId = GetUserId();
+        if (startDate == default || endDate == default || startDate > endDate)
+        {
+            return BadRequest("Invalid date range.");
+        }
+        var entries = await _habitService.GetAllHabitEntriesForPeriodAsync(userId, startDate, endDate);
+        return Ok(entries);
+    }
+
+    [HttpGet("categories")]
+    public async Task<IActionResult> GetCategories()
+    {
+        var categories = await _habitService.GetCategoriesAsync(GetUserId());
+        return Ok(categories);
+    }
+
+    [HttpPost("categories")]
+    [EnableRateLimiting("mutations")]
+    public async Task<IActionResult> CreateCategory(CreateHabitCategoryDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var category = await _habitService.CreateCategoryAsync(dto, GetUserId());
+        return Ok(category);
+    }
+
+    [HttpPut("categories/{categoryId}")]
+    [EnableRateLimiting("mutations")]
+    public async Task<IActionResult> UpdateCategory(string categoryId, UpdateHabitCategoryDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var category = await _habitService.UpdateCategoryAsync(categoryId, dto, GetUserId());
+        if (category == null) return NotFound();
+        return Ok(category);
+    }
+
+    [HttpDelete("categories/{categoryId}")]
+    [EnableRateLimiting("mutations")]
+    public async Task<IActionResult> DeleteCategory(string categoryId)
+    {
+        var success = await _habitService.DeleteCategoryAsync(categoryId, GetUserId());
+        if (!success) return NotFound();
+        return NoContent();
+    }
+
+    [HttpPost("pomodoro-sessions")]
+    [EnableRateLimiting("mutations")]
+    public async Task<IActionResult> CreatePomodoroSession(CreatePomodoroSessionDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var session = await _habitService.CreatePomodoroSessionAsync(dto, GetUserId());
+        if (session == null) return BadRequest("Habit not found.");
+        return Ok(session);
+    }
+
+    [HttpGet("pomodoro-sessions")]
+    public async Task<IActionResult> GetPomodoroSessions([FromQuery] DateTime startDate, [FromQuery] DateTime endDate)
+    {
+        if (startDate == default || endDate == default || startDate > endDate)
+        {
+            return BadRequest("Invalid date range.");
+        }
+        var sessions = await _habitService.GetPomodoroSessionsAsync(GetUserId(), startDate, endDate);
+        return Ok(sessions);
+    }
+
+    [HttpGet("pomodoro-stats")]
+    public async Task<IActionResult> GetPomodoroStats([FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+    {
+        var end = endDate ?? DateTime.UtcNow;
+        var start = startDate ?? end.AddDays(-30);
+        if (start > end)
+        {
+            return BadRequest("Invalid date range.");
+        }
+
+        var stats = await _habitService.GetPomodoroStatsAsync(GetUserId(), start, end);
+        return Ok(stats);
     }
 }

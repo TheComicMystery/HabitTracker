@@ -3,6 +3,7 @@ using MongoDB.Bson.Serialization.Attributes;
 
 namespace HabitTracker.Api.Models;
 
+[BsonIgnoreExtraElements]
 public class Habit
 {
     [BsonId]
@@ -14,6 +15,7 @@ public class Habit
 
     public string Name { get; set; } = null!;
     public string? Description { get; set; }
+    public string? Category { get; set; }
     public string? Icon { get; set; } 
     public string? Color { get; set; } 
     public int TargetCount { get; set; } = 1; 
